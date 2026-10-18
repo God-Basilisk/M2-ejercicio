@@ -1,60 +1,155 @@
-import './style.css'
-import heroImg from './assets/hero.png'
-import javascriptLogo from './assets/javascript.svg'
-import viteLogo from './assets/vite.svg'
-import { setupCounter } from './counter.js'
+// Orquestación: estado de la app y eventos. Conecta api → logic → render.
+import './style.css';
+import { PAGE_SIZE, getPokedexEntry, getPokemonPage, getTypes } from './api.js';
+import { clearCache } from './cache.js';
+import {
+  computeQuartiles,
+  filterPokemon,
+  mergeById,
+  sortPokemon,
+  summarize,
+  toViewModel,
+} from './logic.js';
+import { renderGrid, renderStatus, renderSummary, renderTypeOptions } from './render.js';
+import { playCry } from './audio.js';
 
-document.querySelector('#app').innerHTML = `
-<section id="center">
-  <div class="hero">
-    <img src="${heroImg}" class="base" width="170" height="179">
-    <img src="${javascriptLogo}" class="framework" alt="JavaScript logo"/>
-    <img src="${viteLogo}" class="vite" alt="Vite logo" />
-  </div>
-  <div>
-    <h1>Get started</h1>
-    <p>Edit <code>src/main.js</code> and save to test <code>HMR</code></p>
-  </div>
-  <button id="counter" type="button" class="counter"></button>
-</section>
+const $ = (selector) => document.querySelector(selector);
+const els = {
+  controls: $('#controls'),
+  search: $('#search'),
+  type: $('#type-filter'),
+  sort: $('#sort'),
+  clearCache: $('#clear-cache'),
+  summary: $('#summary'),
+  status: $('#status'),
+  grid: $('#grid'),
+  loadMore: $('#load-more'),
+};
 
-<div class="ticks"></div>
+const state = {
+  all: [],
+  offset: 0,
+  total: null, // lo rellena la API en la primera página
+  loading: false,
+  status: { kind: 'idle' },
+  query: '',
+  type: '',
+  sort: 'id',
+};
 
-<section id="next-steps">
-  <div id="docs">
-    <svg class="icon" role="presentation" aria-hidden="true"><use href="/icons.svg#documentation-icon"></use></svg>
-    <h2>Documentation</h2>
-    <p>Your questions, answered</p>
-    <ul>
-      <li>
-        <a href="https://vite.dev/" target="_blank">
-          <img class="logo" src="${viteLogo}" alt="" />
-          Explore Vite
-        </a>
-      </li>
-      <li>
-        <a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript" target="_blank">
-          <img class="button-icon" src="${javascriptLogo}" alt="">
-          Learn more
-        </a>
-      </li>
-    </ul>
-  </div>
-  <div id="social">
-    <svg class="icon" role="presentation" aria-hidden="true"><use href="/icons.svg#social-icon"></use></svg>
-    <h2>Connect with us</h2>
-    <p>Join the Vite community</p>
-    <ul>
-      <li><a href="https://github.com/vitejs/vite" target="_blank"><svg class="button-icon" role="presentation" aria-hidden="true"><use href="/icons.svg#github-icon"></use></svg>GitHub</a></li>
-      <li><a href="https://chat.vite.dev/" target="_blank"><svg class="button-icon" role="presentation" aria-hidden="true"><use href="/icons.svg#discord-icon"></use></svg>Discord</a></li>
-      <li><a href="https://x.com/vite_js" target="_blank"><svg class="button-icon" role="presentation" aria-hidden="true"><use href="/icons.svg#x-icon"></use></svg>X.com</a></li>
-      <li><a href="https://bsky.app/profile/vite.dev" target="_blank"><svg class="button-icon" role="presentation" aria-hidden="true"><use href="/icons.svg#bluesky-icon"></use></svg>Bluesky</a></li>
-    </ul>
-  </div>
-</section>
+// Se pasa al render para que pida la entrada de la Pokédex al pasar el ratón.
+const loadEntry = (pokemon) => getPokedexEntry(pokemon.species);
 
-<div class="ticks"></div>
-<section id="spacer"></section>
-`
+function update() {
+  const visible = sortPokemon(
+    filterPokemon(state.all, { query: state.query, type: state.type }),
+    state.sort,
+  );
 
-setupCounter(document.querySelector('#counter'))
+  renderGrid(els.grid, visible, computeQuartiles(state.all), loadEntry);
+  renderSummary(els.summary, summarize(visible), state.all.length);
+
+  const idleAndEmpty = !state.loading && state.status.kind === 'idle' && visible.length === 0;
+  renderStatus(
+    els.status,
+    idleAndEmpty
+      ? {
+          kind: 'empty',
+          message: state.all.length
+            ? 'Ningún Pokémon coincide con la búsqueda. Prueba otro filtro o carga más.'
+            : 'No hay Pokémon que mostrar.',
+        }
+      : state.status,
+  );
+
+  const exhausted = state.total !== null && state.offset >= state.total;
+  els.loadMore.hidden = exhausted;
+  els.loadMore.disabled = state.loading;
+  els.loadMore.textContent = state.loading ? 'Cargando…' : 'Cargar más';
+}
+
+async function loadMore() {
+  if (state.loading) return;
+  state.loading = true;
+  state.status = { kind: 'loading', message: 'Capturando Pokémon…' };
+  update();
+
+  try {
+    const { items, failed, total } = await getPokemonPage(state.offset, PAGE_SIZE);
+    state.total = total;
+    state.all = mergeById(state.all, items.map(toViewModel));
+    state.offset += PAGE_SIZE;
+    state.status = failed
+      ? { kind: 'warning', message: `${failed} Pokémon no se pudieron cargar. El resto sí.` }
+      : { kind: 'idle' };
+  } catch (error) {
+    state.status = { kind: 'error', message: error.message, onRetry: loadMore };
+  } finally {
+    state.loading = false;
+    update();
+  }
+}
+
+async function loadTypes() {
+  try {
+    renderTypeOptions(els.type, await getTypes());
+  } catch {
+    // Los tipos son accesorios: sin ellos el filtro queda en "Todos".
+  }
+}
+
+const debounce = (fn, ms) => {
+  let id;
+  return (...args) => {
+    clearTimeout(id);
+    id = setTimeout(() => fn(...args), ms);
+  };
+};
+
+// ---------- Grito del Pokémon al hacer clic ----------
+// Un solo addEventListener en el grid (delegación de eventos) sirve para todas las
+// cartas, también las que se crean después con "Cargar más" o al filtrar.
+function singCry(card) {
+  const url = card?.dataset.cry;
+  if (!url) return; // algunas formas no tienen grito
+  playCry(url);
+  card.classList.remove('is-singing');
+  void card.offsetWidth; // fuerza un reflow para reiniciar la animación si haces clic seguido
+  card.classList.add('is-singing');
+}
+
+els.grid.addEventListener('click', (event) => singCry(event.target.closest('.card')));
+els.grid.addEventListener('keydown', (event) => {
+  if (event.target.matches('.card') && (event.key === 'Enter' || event.key === ' ')) {
+    event.preventDefault(); // evita que la barra espaciadora haga scroll
+    singCry(event.target);
+  }
+});
+els.grid.addEventListener('animationend', (event) => event.target.classList.remove('is-singing'));
+
+els.controls.addEventListener('submit', (event) => event.preventDefault());
+els.search.addEventListener(
+  'input',
+  debounce((event) => {
+    state.query = event.target.value;
+    update();
+  }, 200),
+);
+els.type.addEventListener('change', (event) => {
+  state.type = event.target.value;
+  update();
+});
+els.sort.addEventListener('change', (event) => {
+  state.sort = event.target.value;
+  update();
+});
+els.loadMore.addEventListener('click', loadMore);
+els.clearCache.addEventListener('click', () => {
+  clearCache();
+  state.status = { kind: 'info', message: 'Caché vaciada. Las próximas cargas irán a la red.' };
+  update();
+  state.status = { kind: 'idle' };
+});
+
+loadTypes();
+loadMore();

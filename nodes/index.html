@@ -1,13 +1,63 @@
 <!doctype html>
-<html lang="en">
+<html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/svg+xml" href="/Poké_Ball_icon.svg.webp" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>nodes</title>
+    <title>Pokédex</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Space+Mono:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+    <script type="module" src="/src/main.js"></script>
   </head>
   <body>
-    <div id="app"></div>
-    <script type="module" src="/src/main.js"></script>
+    <header class="hero">
+      <h1>Pokédex</h1>
+    </header>
+
+    <main>
+      <form class="controls" id="controls" autocomplete="off">
+        <label>
+          Buscar
+          <input type="search" id="search" placeholder="pika, char, bulba…" />
+        </label>
+        <label>
+          Tipo
+          <select id="type-filter"><option value="">Todos</option></select>
+        </label>
+        <label>
+          Ordenar
+          <select id="sort">
+            <option value="id">Nº Pokédex</option>
+            <option value="name">Nombre</option>
+            <option value="total">Stats totales</option>
+            <option value="weight">Peso</option>
+          </select>
+        </label>
+        <button type="button" id="clear-cache" title="Borra la caché de localStorage">
+          Vaciar caché
+        </button>
+      </form>
+
+      <p class="legend" aria-label="Leyenda de colores de las estadísticas">
+        <span><i class="dot level-low"></i>Por debajo de 25%</span>
+        <span><i class="dot level-mid"></i>Entre 25% y 75%</span>
+        <span><i class="dot level-high"></i>Por encima de 75%</span>
+      </p>
+
+
+      <section id="summary" class="summary" aria-live="polite"></section>
+      <section id="status" class="status" aria-live="polite"></section>
+      <section id="grid" class="grid"></section>
+
+      <div class="more">
+        <button type="button" id="load-more">Cargar más</button>
+      </div>
+    </main>
+
+    <footer>Datos de <a href="https://pokeapi.co" target="_blank" rel="noreferrer">PokeAPI</a></footer>
   </body>
 </html>
